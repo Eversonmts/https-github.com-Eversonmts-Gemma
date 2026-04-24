@@ -122,13 +122,30 @@ export default function Clients() {
     const toastId = toast.loading(editingClient ? 'Atualizando cliente...' : 'Salvando cliente...');
 
     try {
+      const { name, phone, whatsapp, address, number, district, city, notes, type, cpf, birth_date, extra_details, lat, lng } = formData;
+      
+      const payload = {
+        name,
+        phone,
+        whatsapp,
+        address,
+        number,
+        district,
+        city,
+        notes,
+        type,
+        cpf,
+        birth_date: birth_date || null,
+        extra_details,
+        lat,
+        lng,
+        updated_at: new Date().toISOString()
+      };
+
       if (editingClient) {
         const { error } = await supabase
           .from('clients')
-          .update({
-            ...formData,
-            updated_at: new Date().toISOString()
-          })
+          .update(payload)
           .eq('id', editingClient.id);
         
         if (error) throw error;
@@ -136,19 +153,17 @@ export default function Clients() {
       } else {
         const { error } = await supabase
           .from('clients')
-          .insert([{
-            ...formData,
-            updated_at: new Date().toISOString()
-          }]);
+          .insert([payload]);
         
         if (error) throw error;
         toast.success('Cliente cadastrado!', { id: toastId });
       }
       setIsModalOpen(false);
       resetForm();
+      fetchClients();
     } catch (error: any) {
       console.error("Supabase Client Error:", error);
-      toast.error(`Erro: ${error.message}`, { id: toastId });
+      toast.error(`Erro ao salvar: ${error.message || 'Verifique a tabela no Supabase'}`, { id: toastId });
     } finally {
       setSaving(false);
     }
@@ -220,6 +235,21 @@ export default function Clients() {
           <p className="text-slate-500">Gerencie sua base de contatos e endereços.</p>
         </div>
         <button 
+          onClick={async () => {
+            // @ts-ignore
+            if (window.deferredPrompt) {
+              // @ts-ignore
+              window.deferredPrompt.prompt();
+            } else {
+              alert('O aplicativo já está instalado ou seu navegador não suporta a instalação direta. Procure pela opção "Adicionar à tela de início" no menu do navegador.');
+            }
+          }}
+          className="bg-white text-slate-700 border border-slate-200 px-5 py-2.5 rounded-xl font-medium flex items-center gap-2 hover:bg-slate-50 transition-all active:scale-95 shadow-sm"
+        >
+          <div className="w-2 h-2 bg-green-500 rounded-full animate-ping" />
+          Instalar Aplicativo
+        </button>
+        <button 
           onClick={() => { resetForm(); setIsModalOpen(true); }}
           className="bg-primary text-white px-5 py-2.5 rounded-xl font-medium flex items-center gap-2 hover:bg-primary/90 transition-all shadow-lg shadow-primary/20 active:scale-95"
         >
@@ -274,10 +304,10 @@ export default function Clients() {
               <div>
                 <div className="flex justify-between items-start">
                   <h3 className="font-bold text-lg text-slate-800">{client.name || 'Sem Nome'}</h3>
-                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => handleQuickSale(client)} className="p-2 hover:bg-primary/10 rounded-lg text-primary" title="Nova Venda"><ShoppingCart className="w-4 h-4" /></button>
-                    <button onClick={() => handleEdit(client)} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500"><Edit2 className="w-4 h-4" /></button>
-                    <button onClick={() => handleDelete(client.id)} className="p-2 hover:bg-red-50 rounded-lg text-red-500"><Trash2 className="w-4 h-4" /></button>
+                  <div className="flex gap-1 md:opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onClick={() => handleQuickSale(client)} className="p-2 hover:bg-primary/10 rounded-lg text-primary" title="Nova Venda"><ShoppingCart className="w-5 h-5" /></button>
+                    <button onClick={() => handleEdit(client)} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500" title="Editar"><Edit2 className="w-5 h-5" /></button>
+                    <button onClick={() => handleDelete(client.id)} className="p-2 hover:bg-red-50 rounded-lg text-red-500" title="Excluir"><Trash2 className="w-5 h-5" /></button>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 mb-4">

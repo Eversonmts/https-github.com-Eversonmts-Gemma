@@ -77,17 +77,20 @@ export default function Sellers() {
     const tid = toast.loading('Processando...');
 
     try {
-      const data = {
-        ...formData,
+      const payload = {
+        name: formData.name,
+        email: formData.email,
+        active: formData.active,
+        permissions: formData.permissions,
         updated_at: new Date().toISOString(),
       };
 
       if (editingSeller) {
-        const { error } = await supabase.from('sellers').update(data).eq('id', editingSeller.id);
+        const { error } = await supabase.from('sellers').update(payload).eq('id', editingSeller.id);
         if (error) throw error;
         toast.success('Vendedor atualizado!', { id: tid });
       } else {
-        const { error } = await supabase.from('sellers').insert([data]);
+        const { error } = await supabase.from('sellers').insert([payload]);
         if (error) throw error;
         toast.success('Vendedor cadastrado!', { id: tid });
       }

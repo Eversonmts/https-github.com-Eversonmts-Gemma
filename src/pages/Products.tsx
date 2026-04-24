@@ -124,7 +124,16 @@ export default function Products() {
     try {
       const { kit_items, ...cleanData } = formData;
       const productPayload = {
-        ...cleanData,
+        name: cleanData.name,
+        category_id: cleanData.category_id,
+        type: cleanData.type,
+        cost_price: cleanData.cost_price,
+        sale_price: cleanData.sale_price,
+        stock: cleanData.stock,
+        min_stock: cleanData.min_stock,
+        commission_value: cleanData.commission_value,
+        active: cleanData.active,
+        image_url: cleanData.image_url,
         updated_at: new Date().toISOString()
       };
 
@@ -172,6 +181,19 @@ export default function Products() {
       toast.error(`Erro ao salvar: ${err.message}`, { id: tid });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (window.confirm('Tem certeza que deseja excluir este produto?')) {
+      try {
+        const { error } = await supabase.from('products').delete().eq('id', id);
+        if (error) throw error;
+        toast.success('Produto excluído!');
+        fetchProducts();
+      } catch (err: any) {
+        toast.error('Erro ao excluir: ' + err.message);
+      }
     }
   };
 
@@ -237,13 +259,30 @@ export default function Products() {
           <h1 className="text-3xl font-bold tracking-tight text-slate-900 font-display text-left">Produtos</h1>
           <p className="text-slate-500">Catálogo de produtos e controle de estoque.</p>
         </div>
-        <button 
-          onClick={() => { resetForm(); setIsModalOpen(true); }}
-          className="bg-primary text-white px-5 py-2.5 rounded-xl font-medium flex items-center gap-2 hover:bg-primary/90 transition-all shadow-lg shadow-primary/20"
-        >
-          <Plus className="w-5 h-5" />
-          Novo Produto
-        </button>
+        <div className="flex gap-2">
+          <button 
+            onClick={async () => {
+              // @ts-ignore
+              if (window.deferredPrompt) {
+                // @ts-ignore
+                window.deferredPrompt.prompt();
+              } else {
+                alert('O aplicativo já está instalado ou seu navegador não suporta a instalação direta. Procure pela opção "Adicionar à tela de início" no menu do navegador.');
+              }
+            }}
+            className="bg-white text-slate-700 border border-slate-200 px-5 py-2.5 rounded-xl font-medium flex items-center gap-2 hover:bg-slate-50 transition-all active:scale-95 shadow-sm"
+          >
+            <div className="w-2 h-2 bg-green-500 rounded-full animate-ping" />
+            Instalar App
+          </button>
+          <button 
+            onClick={() => { resetForm(); setIsModalOpen(true); }}
+            className="bg-primary text-white px-5 py-2.5 rounded-xl font-medium flex items-center gap-2 hover:bg-primary/90 transition-all shadow-lg shadow-primary/20"
+          >
+            <Plus className="w-5 h-5" />
+            Novo Produto
+          </button>
+        </div>
       </div>
 
       <div className="relative">
@@ -304,9 +343,10 @@ export default function Products() {
                     </span>
                   </td>
                   <td className="px-6 py-4 text-right">
-                    <div className="flex justify-end gap-2">
-                       <button onClick={() => handleEdit(p)} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 transition-colors"><Edit2 className="w-4 h-4" /></button>
-                       <button onClick={() => handleDuplicate(p)} className="p-2 hover:bg-blue-50 rounded-lg text-blue-500 transition-colors"><Copy className="w-4 h-4" /></button>
+                    <div className="flex justify-end gap-2 md:opacity-0 group-hover:opacity-100 transition-opacity">
+                       <button onClick={() => handleEdit(p)} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 transition-colors" title="Editar"><Edit2 className="w-4 h-4" /></button>
+                       <button onClick={() => handleDuplicate(p)} className="p-2 hover:bg-blue-50 rounded-lg text-blue-500 transition-colors" title="Duplicar"><Copy className="w-4 h-4" /></button>
+                       <button onClick={() => handleDelete(p.id)} className="p-2 hover:bg-red-50 rounded-lg text-red-500 transition-colors" title="Excluir"><Trash2 className="w-4 h-4" /></button>
                     </div>
                   </td>
                 </tr>

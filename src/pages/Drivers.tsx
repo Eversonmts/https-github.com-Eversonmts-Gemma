@@ -79,17 +79,22 @@ export default function Drivers() {
     const tid = toast.loading('Processando...');
 
     try {
-      const data = {
-        ...formData,
+      const payload = {
+        name: formData.name,
+        phone: formData.phone,
+        email: formData.email,
+        vehicle: formData.vehicle,
+        vehicle_plate: formData.vehicle_plate,
+        active: formData.active,
         updated_at: new Date().toISOString(),
       };
 
       if (editingDriver) {
-        const { error } = await supabase.from('drivers').update(data).eq('id', editingDriver.id);
+        const { error } = await supabase.from('drivers').update(payload).eq('id', editingDriver.id);
         if (error) throw error;
         toast.success('Entregador atualizado!', { id: tid });
       } else {
-        const { error } = await supabase.from('drivers').insert([data]);
+        const { error } = await supabase.from('drivers').insert([payload]);
         if (error) throw error;
         toast.success('Entregador cadastrado!', { id: tid });
       }
