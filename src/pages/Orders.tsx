@@ -203,11 +203,13 @@ export default function Orders() {
           {filteredOrders.length > 0 ? (
             filteredOrders.map((order) => {
               const currentStatusIndex = statuses.findIndex(s => s.id === order.status);
-              const nextStatus = currentStatusIndex < statuses.length - 1 && 
-                                statuses[currentStatusIndex + 1].id !== 'cancelado' && 
-                                statuses[currentStatusIndex + 1].id !== 'remarcado'
-                                ? statuses[currentStatusIndex + 1] 
-                                : null;
+              let nextStatus = null;
+              if (currentStatusIndex !== -1 && currentStatusIndex < statuses.length - 1) {
+                const candidate = statuses[currentStatusIndex + 1];
+                if (candidate.id !== 'cancelado' && candidate.id !== 'remarcado') {
+                  nextStatus = candidate;
+                }
+              }
 
               return (
                 <motion.div
@@ -234,7 +236,10 @@ export default function Orders() {
                            <span className="text-xs font-black uppercase text-slate-800">{statuses.find(s => s.id === order.status)?.label || order.status}</span>
                         </div>
                         <div className="w-10 h-10 rounded-full bg-white/50 flex items-center justify-center border border-white/50 backdrop-blur-sm shadow-inner">
-                          {React.createElement(getStatusIcon(order.status), { className: "w-5 h-5" })}
+                          {(() => {
+                            const StatusIcon = getStatusIcon(order.status);
+                            return <StatusIcon className="w-5 h-5" />;
+                          })()}
                         </div>
                       </div>
                     </div>

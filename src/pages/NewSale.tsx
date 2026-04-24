@@ -445,23 +445,28 @@ export default function NewSale() {
                   {recentSales.length === 0 ? (
                     <p className="text-xs text-slate-400 text-center py-4 italic">Nenhuma venda realizada recentemente.</p>
                   ) : (
-                    recentSales.map((sale: any) => (
-                      <div key={sale.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-[10px] font-black text-slate-400">
-                            #{sale.id.slice(-4).toUpperCase()}
+                    recentSales.map((sale: any) => {
+                      const saleId = sale.id || '';
+                      return (
+                        <div key={saleId} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-[10px] font-black text-slate-400">
+                              #{saleId.slice(-4).toUpperCase()}
+                            </div>
+                            <div>
+                              <p className="text-xs font-bold text-slate-900">{sale.clients?.name || 'Cliente'}</p>
+                              <p className="text-[10px] text-slate-500">
+                                {sale.created_at ? new Date(sale.created_at).toLocaleTimeString() : '--:--'}
+                              </p>
+                            </div>
                           </div>
-                          <div>
-                            <p className="text-xs font-bold text-slate-900">{sale.clients?.name || 'Cliente'}</p>
-                            <p className="text-[10px] text-slate-500">{new Date(sale.created_at).toLocaleTimeString()}</p>
+                          <div className="text-right">
+                            <p className="text-xs font-black text-primary">R$ {Number(sale.total || 0).toFixed(2)}</p>
+                            <span className="text-[8px] font-bold px-2 py-0.5 bg-green-100 text-green-700 rounded-full uppercase">Salvo</span>
                           </div>
                         </div>
-                        <div className="text-right">
-                          <p className="text-xs font-black text-primary">R$ {Number(sale.total).toFixed(2)}</p>
-                          <span className="text-[8px] font-bold px-2 py-0.5 bg-green-100 text-green-700 rounded-full uppercase">Salvo</span>
-                        </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </div>
