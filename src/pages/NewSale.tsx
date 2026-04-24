@@ -29,28 +29,48 @@ export default function NewSale() {
   const [saving, setSaving] = useState(false);
   const [isClientModalOpen, setIsClientModalOpen] = useState(false);
   const [step, setStep] = useState(1);
+  const [recentSales, setRecentSales] = useState<any[]>([]);
+
+  const fetchRecentSales = async () => {
+    try {
+      const { data } = await supabase
+        .from('orders')
+        .select('*, clients(name)')
+        .order('created_at', { ascending: false })
+        .limit(5);
+      if (data) setRecentSales(data);
+    } catch (err) {
+      console.warn('Error fetching recent sales:', err);
+    }
+  };
 
   const fetchData = async () => {
-    const [p, c, s, d, cfg] = await Promise.all([
-      supabase.from('products').select('*, kit_items(*)'),
-      supabase.from('clients').select('*'),
-      supabase.from('sellers').select('*'),
-      supabase.from('drivers').select('*'),
-      supabase.from('settings').select('*').eq('id', 'config').single()
-    ]);
+    try {
+      const [p, c, s, d, cfg] = await Promise.all([
+        supabase.from('products').select('*'), // Simpler select
+        supabase.from('clients').select('*'),
+        supabase.from('sellers').select('*'),
+        supabase.from('drivers').select('*'),
+        supabase.from('settings').select('*').eq('id', 'config').maybeSingle()
+      ]);
 
-    if (p.data) setProducts(p.data);
-    if (c.data) {
-      setClients(c.data);
-      if (preSelectedClientId) {
-        const client = c.data.find(cli => cli.id === preSelectedClientId);
-        if (client) setSelectedClient(client);
+      if (p.data) setProducts(p.data);
+      if (c.data) {
+        setClients(c.data);
+        if (preSelectedClientId) {
+          const client = c.data.find(cli => cli.id === preSelectedClientId);
+          if (client) setSelectedClient(client);
+        }
       }
-    }
-    if (s.data) setSellers(s.data);
-    if (d.data) setDrivers(d.data);
-    if (cfg.data?.value?.default_delivery_fee) {
-      setDeliveryFee(cfg.data.value.default_delivery_fee);
+      if (s.data) setSellers(s.data);
+      if (d.data) setDrivers(d.data);
+      if (cfg.data?.value?.default_delivery_fee) {
+        setDeliveryFee(cfg.data.value.default_delivery_fee);
+      }
+      fetchRecentSales();
+    } catch (err: any) {
+      console.error('Error fetching data for sale:', err);
+      toast.error('Erro ao conectar ao banco de dados');
     }
   };
 
@@ -96,19 +116,30 @@ export default function NewSale() {
     const tid = toast.loading('Processando venda...');
 
     try {
+      // Helper to validate UUID
+      const isValidUUID = (id: any) => 
+        typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+
+      const sellerId = (isValidUUID(selectedSeller?.id) && sellers.some(s => s.id === selectedSeller.id)) ? selectedSeller.id : null;
+      const driverId = (isValidUUID(selectedDriver?.id) && drivers.some(d => d.id === selectedDriver.id)) ? selectedDriver.id : null;
+
+      console.log('Sending payload:', {
+        client_id: selectedClient.id,
+        seller_id: sellerId,
+        driver_id: driverId
+      });
+
       // 1. Create Order
       const { data: order, error: orderErr } = await supabase
         .from('orders')
         .insert([{
           client_id: selectedClient.id,
-          seller_id: selectedSeller?.id || null,
-          driver_id: selectedDriver?.id || null,
+          seller_id: sellerId,
+          driver_id: driverId,
           total,
           subtotal,
           delivery_fee: deliveryFee,
           discount,
-          notes,
-          delivery_date_predicted: deliveryDate || null,
           payment_method: paymentMethod,
           status: 'novo'
         }])
@@ -121,9 +152,8 @@ export default function NewSale() {
       const orderItems = cart.map(item => ({
         order_id: order.id,
         product_id: item.id,
-        name: item.name,
         quantity: item.quantity,
-        price: item.sale_price,
+        unit_price: item.sale_price,
         commission: item.commission_value || 0
       }));
 
@@ -141,7 +171,7 @@ export default function NewSale() {
             
             // Get current stock
             const { data: pData } = await supabase.from('products').select('stock').eq('id', kitItem.product_id).single();
-            const currentStock = pData?.stock || 0;
+            const currentStock = pData?.stock ?? 0;
 
             await supabase.from('products').update({ stock: currentStock - qtyToDeduct }).eq('id', kitItem.product_id);
             await supabase.from('stock_movements').insert({
@@ -154,7 +184,7 @@ export default function NewSale() {
         } else {
           // Simple item
           const { data: pData } = await supabase.from('products').select('stock').eq('id', item.id).single();
-          const currentStock = pData?.stock || 0;
+          const currentStock = pData?.stock ?? 0;
 
           await supabase.from('products').update({ stock: currentStock - item.quantity }).eq('id', item.id);
           await supabase.from('stock_movements').insert({
@@ -179,6 +209,7 @@ export default function NewSale() {
       setCart([]);
       setStep(1);
       setSelectedClient(null);
+      fetchRecentSales();
     } catch (err: any) {
       console.error(err);
       toast.error(`Erro: ${err.message}`, { id: tid });
@@ -188,13 +219,14 @@ export default function NewSale() {
   };
 
   const filteredProducts = useMemo(() => {
+    // Show all active products (or all if active is undefined)
     let activeProducts = products.filter(p => p.active !== false);
     
     if (!debouncedSearchProduct) return activeProducts;
     
     const fuse = new Fuse(activeProducts, {
       keys: ['name'],
-      threshold: 0.3,
+      threshold: 0.4,
     });
     
     return fuse.search(debouncedSearchProduct).map(r => r.item);
@@ -401,6 +433,37 @@ export default function NewSale() {
               <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
                  <h3 className="text-xs font-bold text-slate-400 uppercase mb-2">Observações</h3>
                  <textarea className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none min-h-[80px]" placeholder="Instruções extras..." value={notes} onChange={e => setNotes(e.target.value)} />
+              </div>
+
+              {/* Nova Tabela de Vendas Recentes para confirmação visual */}
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                <div className="flex items-center gap-2 mb-4">
+                  <ClipboardList className="w-5 h-5 text-primary" />
+                  <h3 className="font-bold text-slate-900 uppercase text-xs tracking-wider">Últimas Vendas Realizadas</h3>
+                </div>
+                <div className="space-y-3 overflow-hidden">
+                  {recentSales.length === 0 ? (
+                    <p className="text-xs text-slate-400 text-center py-4 italic">Nenhuma venda realizada recentemente.</p>
+                  ) : (
+                    recentSales.map((sale: any) => (
+                      <div key={sale.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-[10px] font-black text-slate-400">
+                            #{sale.id.slice(-4).toUpperCase()}
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold text-slate-900">{sale.clients?.name || 'Cliente'}</p>
+                            <p className="text-[10px] text-slate-500">{new Date(sale.created_at).toLocaleTimeString()}</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-xs font-black text-primary">R$ {Number(sale.total).toFixed(2)}</p>
+                          <span className="text-[8px] font-bold px-2 py-0.5 bg-green-100 text-green-700 rounded-full uppercase">Salvo</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
             </motion.div>
           )}

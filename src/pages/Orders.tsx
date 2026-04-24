@@ -10,7 +10,11 @@ import {
   User, 
   Package, 
   Calendar,
-  Search
+  Search,
+  MapPin,
+  Phone,
+  MessageCircle,
+  ShoppingBag
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -31,7 +35,13 @@ export default function Orders() {
   const fetchOrders = async () => {
     const { data: oData } = await supabase
       .from('orders')
-      .select('*, order_items(*)');
+      .select(`
+        *, 
+        clients(name, phone, address), 
+        seller:seller_id(full_name), 
+        driver:driver_id(full_name), 
+        order_items(*, products(name))
+      `);
     if (oData) setOrders(oData);
     setLoading(false);
   };
@@ -202,71 +212,165 @@ export default function Orders() {
               return (
                 <motion.div
                   layout
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 20 }}
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
                   key={order.id}
-                  className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow"
+                  className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm hover:shadow-xl transition-all"
                 >
-                  <div className="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div className="flex gap-4 items-start">
-                      <div className={cn("p-3 rounded-xl border shrink-0", getColorClass(statuses.find(s => s.id === order.status)?.color))}>
-                        <ClipboardList className="w-6 h-6" />
+                  <div className="p-0">
+                    {/* Header do Card - ID e Status */}
+                    <div className={cn("px-6 py-3 shrink-0 flex items-center justify-between border-b", getColorClass(statuses.find(s => s.id === order.status)?.color))}>
+                      <div className="flex items-center gap-2">
+                        <span className="font-black text-xs tracking-widest uppercase opacity-70">Pedido</span>
+                        <span className="font-bold text-base tracking-tighter">#{order.id.slice(-6).toUpperCase()}</span>
+                        <span className="ml-2 px-2 py-0.5 rounded-md bg-white/30 text-[10px] font-black uppercase text-slate-700 border border-white/20 whitespace-nowrap">
+                          {order.payment_method}
+                        </span>
                       </div>
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-lg text-slate-900">#{order.id.slice(-6).toUpperCase()}</span>
-                          <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[10px] font-bold uppercase">{order.payment_method}</span>
+                      <div className="flex items-center gap-3">
+                        <div className="flex flex-col items-end">
+                           <span className="text-[10px] font-black uppercase opacity-60 tracking-wider">Situação Atual</span>
+                           <span className="text-xs font-black uppercase text-slate-800">{statuses.find(s => s.id === order.status)?.label || order.status}</span>
                         </div>
-                        <div className="text-sm text-slate-500 font-medium flex items-center gap-1">
-                          <User className="w-3 h-3" />
-                          ID Cliente: {order.client_id}
-                        </div>
-                        <div className="text-sm text-slate-500 font-medium flex items-center gap-1">
-                          <Package className="w-3 h-3" />
-                          {order.items?.length || 0} Itens • Total: R$ {order.total?.toFixed(2)}
+                        <div className="w-10 h-10 rounded-full bg-white/50 flex items-center justify-center border border-white/50 backdrop-blur-sm shadow-inner">
+                          {React.createElement(getStatusIcon(order.status), { className: "w-5 h-5" })}
                         </div>
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2 md:justify-end">
-                      {nextStatus && (
-                        <button 
-                          onClick={() => updateStatus(order.id, nextStatus.id)} 
-                          className={cn(
-                            "px-4 py-2 rounded-xl text-sm font-bold text-white transition-colors",
-                            nextStatus.color === 'emerald' ? "bg-emerald-600 hover:bg-emerald-700" :
-                            nextStatus.color === 'orange' ? "bg-orange-500 hover:bg-orange-600" :
-                            nextStatus.color === 'purple' ? "bg-purple-600 hover:bg-purple-700" :
-                            nextStatus.color === 'red' ? "bg-red-500 hover:bg-red-600" :
-                            nextStatus.color === 'slate' ? "bg-slate-700 hover:bg-black" :
-                            "bg-primary hover:opacity-90"
-                          )}
-                        >
-                          {nextStatus.label}
-                        </button>
-                      )}
-                      
-                      {order.status !== 'entregue' && order.status !== 'cancelado' && (
-                        <div className="flex gap-1">
-                          <button 
-                            onClick={() => updateStatus(order.id, 'cancelado')} 
-                            className="p-2 text-red-500 hover:bg-red-50 rounded-xl transition-colors"
-                            title="Cancelar"
-                          >
-                            <XCircle className="w-5 h-5" />
-                          </button>
-                          <button 
-                            onClick={() => updateStatus(order.id, 'remarcado')} 
-                            className="p-2 text-orange-500 hover:bg-orange-50 rounded-xl transition-colors"
-                            title="Remarcar"
-                          >
-                            <Calendar className="w-5 h-5" />
-                          </button>
+                    <div className="p-6 space-y-6">
+                      {/* Cliente e WhatsApp */}
+                      <div className="flex items-start justify-between">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Cliente</label>
+                          <h4 className="text-xl font-black text-slate-900 leading-none">{order.clients?.name || 'Cliente Geral'}</h4>
+                          <div className="flex items-center gap-3 mt-2">
+                            {order.clients?.phone && (
+                              <a 
+                                href={`https://wa.me/55${order.clients.phone.replace(/\D/g, '')}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-bold hover:bg-green-600 transition-colors shadow-sm"
+                              >
+                                <MessageCircle className="w-4 h-4" />
+                                WhatsApp
+                              </a>
+                            )}
+                            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold">
+                              <Phone className="w-4 h-4" />
+                              {order.clients?.phone || 'Sem fone'}
+                            </div>
+                          </div>
                         </div>
-                      )}
-                      
-                      <button className="p-2 text-slate-400 hover:bg-slate-100 rounded-xl transition-colors"><ChevronRight className="w-5 h-5" /></button>
+                        <div className="text-right">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Geral</label>
+                          <p className="text-2xl font-black text-primary tracking-tighter">R$ {Number(order.total || 0).toFixed(2).replace('.', ',')}</p>
+                        </div>
+                      </div>
+
+                      {/* Endereço */}
+                      <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex gap-4">
+                        <div className="w-12 h-12 rounded-xl bg-white border border-slate-200 flex items-center justify-center shrink-0 shadow-sm">
+                          <MapPin className="w-6 h-6 text-red-500" />
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Endereço de Entrega</label>
+                            {order.clients?.address && (
+                              <a 
+                                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(order.clients.address)}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[10px] font-black text-blue-600 hover:underline"
+                              >
+                                ABRIR NO MAPS
+                              </a>
+                            )}
+                          </div>
+                          <p className="text-sm font-bold text-slate-700 mt-1.5 leading-tight">{order.clients?.address || 'Endereço não informado'}</p>
+                        </div>
+                      </div>
+
+                      {/* Produtos e Itens */}
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                           <ShoppingBag className="w-4 h-4 text-slate-400" />
+                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Resumo do Pedido ({order.order_items?.length || 0} itens)</label>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          {(order.order_items || []).map((item: any, idx: number) => (
+                            <div key={idx} className="flex items-center justify-between p-2.5 bg-white border border-slate-100 rounded-xl shadow-xs">
+                              <div className="flex items-center gap-2">
+                                <div className="w-6 h-6 rounded-md bg-slate-100 flex items-center justify-center text-[10px] font-black text-slate-500">
+                                  {item.quantity}x
+                                </div>
+                                <span className="text-xs font-bold text-slate-700 truncate max-w-[150px]">{item.products?.name || `Produto #${item.product_id?.slice(0, 4)}`}</span>
+                              </div>
+                              <span className="text-xs font-black text-slate-900">R$ {(item.unit_price * item.quantity).toFixed(2)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Equipe Responsável */}
+                      <div className="flex items-center justify-between pt-4 border-t border-dashed border-slate-200">
+                        <div className="flex gap-4">
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">Vendido por</label>
+                            <div className="flex items-center gap-1.5">
+                              <User className="w-3 h-3 text-slate-400" />
+                              <span className="text-[11px] font-bold text-slate-600">{order.seller?.full_name || 'Venda Direta'}</span>
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">Entregador</label>
+                            <div className="flex items-center gap-1.5">
+                              <Truck className="w-3 h-3 text-slate-400" />
+                              <span className="text-[11px] font-bold text-slate-600">{order.driver?.full_name || 'A definir'}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {nextStatus && (
+                            <button 
+                              onClick={() => updateStatus(order.id, nextStatus.id)} 
+                              className={cn(
+                                "px-6 py-2.5 rounded-xl text-xs font-black text-white transition-all transform hover:scale-105 active:scale-95 shadow-lg",
+                                nextStatus.color === 'emerald' ? "bg-emerald-600 shadow-emerald-200" :
+                                nextStatus.color === 'orange' ? "bg-orange-500 shadow-orange-200" :
+                                nextStatus.color === 'purple' ? "bg-purple-600 shadow-purple-200" :
+                                nextStatus.color === 'red' ? "bg-red-500 shadow-red-200" :
+                                nextStatus.color === 'slate' ? "bg-slate-800 shadow-slate-200" :
+                                "bg-primary shadow-primary/30"
+                              )}
+                            >
+                              MOVER PARA: {nextStatus.label.toUpperCase()}
+                            </button>
+                          )}
+                          
+                          {order.status !== 'entregue' && order.status !== 'cancelado' && (
+                            <div className="flex gap-1">
+                              <button 
+                                onClick={() => updateStatus(order.id, 'cancelado')} 
+                                className="p-2.5 text-red-500 hover:bg-red-50 rounded-xl transition-colors"
+                                title="Cancelar"
+                              >
+                                <XCircle className="w-5 h-5" />
+                              </button>
+                              <button 
+                                onClick={() => updateStatus(order.id, 'remarcado')} 
+                                className="p-2.5 text-orange-500 hover:bg-orange-50 rounded-xl transition-colors"
+                                title="Remarcar"
+                              >
+                                <Calendar className="w-5 h-5" />
+                              </button>
+                            </div>
+                          )}
+                          <button className="p-2.5 text-slate-300 hover:bg-slate-100 rounded-xl transition-colors"><ChevronRight className="w-5 h-5" /></button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </motion.div>

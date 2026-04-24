@@ -39,7 +39,7 @@ export default function Products() {
 
   const [formData, setFormData] = useState({
     name: '',
-    category_id: 'geral',
+    category_id: '',
     type: 'simple' as 'simple' | 'kit',
     cost_price: 0,
     sale_price: 0,
@@ -52,21 +52,64 @@ export default function Products() {
   });
 
   const fetchProducts = async () => {
+    setLoading(true);
     try {
+      // Clear current state to avoid stale data display
+      setProducts([]);
+      
       const { data, error } = await supabase
         .from('products')
-        .select('*, kit_items(*)');
+        .select('*')
+        .order('name', { ascending: true });
       
       if (error) {
         console.error('Products fetch error:', error);
-        toast.error('Erro ao carregar produtos');
+        toast.error('Erro ao buscar produtos: ' + error.message);
       } else {
+        console.log('Successfully fetched products count:', data?.length);
         setProducts(data || []);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Products fetch catch:', err);
+      toast.error('Falha na comunicação com o banco');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const seedWaterProducts = async () => {
+    const tid = toast.loading('Criando produtos de água...');
+    try {
+      const waterPayload = [
+        {
+          name: 'Água Mineral com Gás',
+          type: 'simple',
+          sale_price: 5.00,
+          cost_price: 2.00,
+          stock: 20,
+          min_stock: 5,
+          active: true,
+          category_id: null
+        },
+        {
+          name: 'Água Mineral sem Gás',
+          type: 'simple',
+          sale_price: 3.50,
+          cost_price: 1.50,
+          stock: 20,
+          min_stock: 5,
+          active: true,
+          category_id: null
+        }
+      ];
+
+      const { error } = await supabase.from('products').insert(waterPayload);
+      if (error) throw error;
+      
+      toast.success('Produtos de água criados!', { id: tid });
+      fetchProducts();
+    } catch (err: any) {
+      toast.error('Erro ao criar: ' + err.message, { id: tid });
     }
   };
 
@@ -82,13 +125,14 @@ export default function Products() {
   }, []);
 
   const calculateVirtualStock = (p: Product) => {
-    if (p.type === 'simple') return p.stock;
+    const currentStock = p.stock ?? 0;
+    if (p.type === 'simple') return currentStock;
     if (!p.kit_items || p.kit_items.length === 0) return 0;
 
     const stocks = p.kit_items.map(item => {
       const root = products.find(prod => prod.id === item.product_id);
       if (!root) return 0;
-      return Math.floor((root.stock || 0) / item.quantity);
+      return Math.floor((root.stock ?? 0) / item.quantity);
     });
 
     return Math.min(...stocks);
@@ -97,7 +141,7 @@ export default function Products() {
   const resetForm = () => {
     setFormData({
       name: '',
-      category_id: 'geral',
+      category_id: '',
       type: 'simple',
       cost_price: 0,
       sale_price: 0,
@@ -123,9 +167,14 @@ export default function Products() {
 
     try {
       const { kit_items, ...cleanData } = formData;
+      
+      // Validação do category_id: Se não for um UUID válido, envia null
+      const isValidUUID = (uuid: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uuid);
+      const catId = isValidUUID(cleanData.category_id) ? cleanData.category_id : null;
+
       const productPayload = {
         name: cleanData.name,
-        category_id: cleanData.category_id,
+        category_id: catId,
         type: cleanData.type,
         cost_price: cleanData.cost_price,
         sale_price: cleanData.sale_price,
@@ -241,11 +290,14 @@ export default function Products() {
   };
 
   const filteredProducts = useMemo(() => {
-    if (!debouncedSearch) return products;
+    // Show all products by default, even those with missing fields
+    let list = products;
     
-    const fuse = new Fuse(products, {
+    if (!debouncedSearch) return list;
+    
+    const fuse = new Fuse(list, {
       keys: ['name', 'category_id'],
-      threshold: 0.3,
+      threshold: 0.4, // slightly more permissive for better matching
       distance: 100,
     });
     
@@ -259,22 +311,7 @@ export default function Products() {
           <h1 className="text-3xl font-bold tracking-tight text-slate-900 font-display text-left">Produtos</h1>
           <p className="text-slate-500">Catálogo de produtos e controle de estoque.</p>
         </div>
-        <div className="flex gap-2">
-          <button 
-            onClick={async () => {
-              // @ts-ignore
-              if (window.deferredPrompt) {
-                // @ts-ignore
-                window.deferredPrompt.prompt();
-              } else {
-                alert('O aplicativo já está instalado ou seu navegador não suporta a instalação direta. Procure pela opção "Adicionar à tela de início" no menu do navegador.');
-              }
-            }}
-            className="bg-white text-slate-700 border border-slate-200 px-5 py-2.5 rounded-xl font-medium flex items-center gap-2 hover:bg-slate-50 transition-all active:scale-95 shadow-sm"
-          >
-            <div className="w-2 h-2 bg-green-500 rounded-full animate-ping" />
-            Instalar App
-          </button>
+        <div className="flex flex-wrap gap-2">
           <button 
             onClick={() => { resetForm(); setIsModalOpen(true); }}
             className="bg-primary text-white px-5 py-2.5 rounded-xl font-medium flex items-center gap-2 hover:bg-primary/90 transition-all shadow-lg shadow-primary/20"
@@ -311,7 +348,18 @@ export default function Products() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
-                Array(5).fill(0).map((_, i) => <tr key={i} className="animate-pulse h-16 bg-white" />)
+                Array(5).fill(0).map((_, i) => <tr key={i} className="animate-pulse h-16 bg-white border-b border-gray-100" />)
+              ) : filteredProducts.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-12 text-center text-slate-500">
+                    <div className="flex flex-col items-center gap-2">
+                      <Package className="w-12 h-12 opacity-20" />
+                      <p className="font-medium text-lg">Nenhum produto encontrado</p>
+                      <p className="text-sm">Clique em "Novo Produto" para começar.</p>
+                      <button onClick={fetchProducts} className="mt-2 text-primary font-bold hover:underline">Tentar Recarregar</button>
+                    </div>
+                  </td>
+                </tr>
               ) : filteredProducts.map((p) => (
                 <tr key={p.id} className="hover:bg-slate-50/50 transition-colors">
                   <td className="px-6 py-4">

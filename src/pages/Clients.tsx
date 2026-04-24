@@ -235,21 +235,6 @@ export default function Clients() {
           <p className="text-slate-500">Gerencie sua base de contatos e endereços.</p>
         </div>
         <button 
-          onClick={async () => {
-            // @ts-ignore
-            if (window.deferredPrompt) {
-              // @ts-ignore
-              window.deferredPrompt.prompt();
-            } else {
-              alert('O aplicativo já está instalado ou seu navegador não suporta a instalação direta. Procure pela opção "Adicionar à tela de início" no menu do navegador.');
-            }
-          }}
-          className="bg-white text-slate-700 border border-slate-200 px-5 py-2.5 rounded-xl font-medium flex items-center gap-2 hover:bg-slate-50 transition-all active:scale-95 shadow-sm"
-        >
-          <div className="w-2 h-2 bg-green-500 rounded-full animate-ping" />
-          Instalar Aplicativo
-        </button>
-        <button 
           onClick={() => { resetForm(); setIsModalOpen(true); }}
           className="bg-primary text-white px-5 py-2.5 rounded-xl font-medium flex items-center gap-2 hover:bg-primary/90 transition-all shadow-lg shadow-primary/20 active:scale-95"
         >
