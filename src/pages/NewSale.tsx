@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
-import { Search, ShoppingCart, User, Plus, Trash2, CheckCircle2, X, Minus, MapPin, Banknote, Tag, Package } from 'lucide-react';
+import { Search, ShoppingCart, User, Plus, Trash2, CheckCircle2, X, Minus, MapPin, Banknote, Tag, Package, ClipboardList } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import { cn } from '../lib/utils';
