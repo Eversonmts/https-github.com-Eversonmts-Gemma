@@ -1,0 +1,6 @@
+{
+  "name": "GEMA - Sistema de Gestão",
+  "description": "Sistema completo de gestão comercial com CRUD de clientes, produtos, controle de estoque, vendas, financeiro, entregadores e vendedores.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

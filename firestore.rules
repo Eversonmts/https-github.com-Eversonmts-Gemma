@@ -1,0 +1,119 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helper Primitives ---
+    function isSignedIn() { return request.auth != null; }
+    function isAdmin() { 
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) || 
+        request.auth.token.email == "mattos.mmn@gmail.com"
+      ); 
+    }
+    function isValidId(id) { return id is string && id.size() <= 128; }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    // --- Validation Blueprints ---
+
+    function isValidClient(data) {
+      return data.name is string && data.name.size() > 0 &&
+             data.whatsapp is string && data.whatsapp.size() > 0;
+    }
+
+    function isValidProduct(data) {
+      return data.name is string && data.name.size() > 0 &&
+             data.sale_price is number && data.sale_price >= 0;
+    }
+
+    function isValidOrder(data) {
+      return data.client_id is string &&
+             data.status is string && data.status.size() > 0 &&
+             data.total is number && data.total >= 0;
+    }
+
+    function isValidDriver(data) {
+      return data.name is string && data.email is string;
+    }
+
+    function isValidSeller(data) {
+      return data.name is string && data.email is string;
+    }
+
+    function isValidTransaction(data) {
+      return data.type in ['income', 'expense', 'forecast'] &&
+             data.value is number && data.date is string;
+    }
+
+    // --- Collection Rules ---
+
+    match /clients/{clientId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(clientId) && isValidClient(incoming()) && incoming().created_at == request.time;
+      allow update: if isSignedIn() && isValidClient(incoming()) && (
+        incoming().updated_at == request.time
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /products/{productId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(productId) && isValidProduct(incoming()) && incoming().created_at == request.time;
+      allow update: if isSignedIn() && isValidProduct(incoming()) && (
+        incoming().updated_at == request.time
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /categories/{categoryId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidId(categoryId);
+      allow delete: if isAdmin();
+    }
+
+    match /orders/{orderId} {
+      allow read: if isSignedIn() && (resource.data.seller_id == request.auth.uid || resource.data.driver_id == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.seller_id == request.auth.uid || resource.data.driver_id == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(orderId) && isValidOrder(incoming()) && incoming().created_at == request.time;
+      allow update: if isSignedIn() && isValidOrder(incoming()) && (
+        incoming().updated_at == request.time
+      );
+    }
+
+    match /stock_movements/{movementId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(movementId);
+    }
+
+    match /drivers/{driverId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidDriver(incoming());
+      allow update: if (isAdmin() || request.auth.uid == resource.data.auth_uid) && isValidDriver(incoming());
+    }
+
+    match /sellers/{sellerId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidSeller(incoming());
+      allow update: if isAdmin() && isValidSeller(incoming());
+    }
+
+    match /transactions/{transactionId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidTransaction(incoming());
+    }
+
+    match /settings/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /admins/{adminId} {
+      allow read: if isSignedIn() && request.auth.uid == adminId;
+    }
+  }
+}

@@ -1,0 +1,162 @@
+{
+  "entities": {
+    "client": {
+      "title": "Client",
+      "description": "Customer information for the GEMA system.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "whatsapp": { "type": "string" },
+        "address": { "type": "string" },
+        "number": { "type": "string" },
+        "district": { "type": "string" },
+        "city": { "type": "string" },
+        "notes": { "type": "string" },
+        "type": { "type": "string", "enum": ["final", "reseller"] },
+        "cpf": { "type": "string" },
+        "birth_date": { "type": "string" },
+        "extra_details": { "type": "string" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "whatsapp", "address"]
+    },
+    "product": {
+      "title": "Product",
+      "description": "Product data with stock management.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "category_id": { "type": "string" },
+        "type": { "type": "string", "enum": ["simple", "kit"] },
+        "cost_price": { "type": "number" },
+        "sale_price": { "type": "number" },
+        "stock": { "type": "number" },
+        "min_stock": { "type": "number" },
+        "commission_value": { "type": "number" },
+        "active": { "type": "boolean" },
+        "image_url": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "category_id", "sale_price"]
+    },
+    "category": {
+      "title": "Category",
+      "description": "Product categories.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name"]
+    },
+    "stock_movement": {
+      "title": "Stock Movement",
+      "description": "History of stock changes.",
+      "type": "object",
+      "properties": {
+        "product_id": { "type": "string" },
+        "type": { "type": "string", "enum": ["in", "out"] },
+        "quantity": { "type": "number" },
+        "reason": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["product_id", "type", "quantity"]
+    },
+    "order": {
+      "title": "Order",
+      "description": "Sales orders and delivery tracking.",
+      "type": "object",
+      "properties": {
+        "client_id": { "type": "string" },
+        "status": { "type": "string", "enum": ["novo", "preparando", "confirmado", "em rota", "entregue", "cancelado"] },
+        "total": { "type": "number" },
+        "items": { "type": "array" },
+        "payment_method": { "type": "string", "enum": ["dinheiro", "pix", "cartao", "local"] },
+        "delivery_address": { "type": "string" },
+        "driver_id": { "type": "string" },
+        "seller_id": { "type": "string" },
+        "delivery_fee": { "type": "number" },
+        "discount": { "type": "number" },
+        "delivery_date_predicted": { "type": "string", "format": "date-time" },
+        "notes": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["client_id", "status", "total"]
+    },
+    "driver": {
+      "title": "Driver",
+      "description": "Delivery driver profiles.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "vehicle": { "type": "string" },
+        "vehicle_plate": { "type": "string" },
+        "payment_type": { "type": "string" },
+        "fixed_value": { "type": "number" },
+        "active": { "type": "boolean" },
+        "auth_uid": { "type": "string" }
+      },
+      "required": ["name", "email", "auth_uid"]
+    },
+    "seller": {
+      "title": "Seller",
+      "description": "Sales staff profiles.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "auth_uid": { "type": "string" },
+        "permissions": { "type": "object" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["name", "email", "auth_uid"]
+    },
+    "transaction": {
+      "title": "Transaction",
+      "description": "Financial records.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "enum": ["income", "expense", "forecast"] },
+        "value": { "type": "number" },
+        "description": { "type": "string" },
+        "category": { "type": "string" },
+        "order_id": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["type", "value", "date"]
+    },
+    "settings": {
+      "title": "Settings",
+      "description": "System and company configuration.",
+      "type": "object",
+      "properties": {
+        "company_name": { "type": "string" },
+        "company_address": { "type": "string" },
+        "company_phone": { "type": "string" },
+        "logo_url": { "type": "string" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "firestore": {
+    "clients": { "schema": "client", "description": "Collection of clients." },
+    "products": { "schema": "product", "description": "Collection of products." },
+    "categories": { "schema": "category", "description": "Collection of product categories." },
+    "stock_movements": { "schema": "stock_movement", "description": "Collection of stock movements history." },
+    "orders": { "schema": "order", "description": "Collection of sales orders." },
+    "drivers": { "schema": "driver", "description": "Collection of delivery drivers." },
+    "sellers": { "schema": "seller", "description": "Collection of sales staff." },
+    "transactions": { "schema": "transaction", "description": "Collection of financial transactions." },
+    "settings": { "schema": "settings", "description": "Single document for company settings." }
+  }
+}
