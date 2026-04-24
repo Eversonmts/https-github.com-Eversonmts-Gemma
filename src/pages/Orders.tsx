@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { 
   ClipboardList, 
@@ -9,12 +9,15 @@ import {
   ChevronRight, 
   User, 
   Package, 
-  Calendar
+  Calendar,
+  Search
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
+import Fuse from 'fuse.js';
+import { useDebounce } from '../hooks/useDebounce';
 
 export default function Orders() {
   const { isDriver, isSeller, isAdmin, profile } = useAuth();
@@ -22,6 +25,8 @@ export default function Orders() {
   const [statuses, setStatuses] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState('');
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounce(search, 300);
 
   const fetchOrders = async () => {
     const { data: oData } = await supabase
@@ -107,33 +112,34 @@ export default function Orders() {
     return Package;
   };
 
-  const filteredOrders = orders.filter(o => {
-    // Basic status match
-    if (o.status !== activeTab) return false;
+  const filteredOrders = useMemo(() => {
+    let result = orders.filter(o => {
+      // Basic status match
+      if (o.status !== activeTab) return false;
 
-    // Direct role restrictions
-    if (isAdmin) return true;
-    
-    if (isSeller) {
-      // Seller sees everything or could be restricted to their sales (optional based on user preference)
-      return true; 
-    }
+      // Direct role restrictions
+      if (isAdmin) return true;
+      
+      if (isSeller) return true; 
 
-    if (isDriver) {
-      // Driver sees orders specifically in 'confirmado' or 'em-rota' stages
-      // AND optionally filters by assignment
-      const relevantStatuses = ['confirmado', 'em-rota', 'entregue'];
-      if (!relevantStatuses.includes(o.status)) return false;
-      
-      // If order is already assigned to another driver, hide it? 
-      // User says "sent to one of the delivery people", implying assignment.
-      if (o.driver_id && o.driver_id !== profile?.id) return false;
-      
+      if (isDriver) {
+        const relevantStatuses = ['confirmado', 'em-rota', 'entregue'];
+        if (!relevantStatuses.includes(o.status)) return false;
+        if (o.driver_id && o.driver_id !== profile?.id) return false;
+        return true;
+      }
       return true;
-    }
+    });
 
-    return true;
-  });
+    if (!debouncedSearch) return result;
+
+    const fuse = new Fuse(result, {
+      keys: ['id', 'status', 'notes', 'payment_method'],
+      threshold: 0.3,
+    });
+
+    return fuse.search(debouncedSearch).map(r => r.item);
+  }, [orders, activeTab, isAdmin, isSeller, isDriver, profile, debouncedSearch]);
 
   return (
     <div className="p-4 md:p-8 space-y-6 text-left">
@@ -142,6 +148,17 @@ export default function Orders() {
           <h1 className="text-3xl font-bold tracking-tight text-slate-900 font-display">Pedidos</h1>
           <p className="text-slate-500">Acompanhe e gerencie o fluxo de entregas.</p>
         </div>
+      </div>
+
+      <div className="relative">
+        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
+        <input 
+          type="text" 
+          placeholder="Buscar por ID, observação ou forma de pgto..." 
+          className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-primary/20 transition-all shadow-sm"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
       </div>
 
       <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">

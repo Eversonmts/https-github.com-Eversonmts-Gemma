@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { Plus, Search, MapPin, Phone, MessageSquare, Edit2, Trash2, X, ShoppingCart, UserCheck, Briefcase } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
+import Fuse from 'fuse.js';
+import { useDebounce } from '../hooks/useDebounce';
 
 interface Client {
   id: string;
@@ -31,6 +33,7 @@ export default function Clients() {
   const [activeTab, setActiveTab] = useState<'all' | 'final' | 'reseller'>('all');
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounce(search, 300);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
@@ -184,15 +187,25 @@ export default function Clients() {
     }
   };
 
-  const filteredClients = clients.filter(c => {
-    const name = (c.name || '').toLowerCase();
-    const searchLower = search.toLowerCase();
-    const whatsapp = (c.whatsapp || '');
+  const filteredClients = useMemo(() => {
+    let result = clients;
     
-    const matchesSearch = name.includes(searchLower) || whatsapp.includes(search);
-    const matchesTab = activeTab === 'all' || c.type === activeTab;
-    return matchesSearch && matchesTab;
-  });
+    // Filter by tab first
+    if (activeTab !== 'all') {
+      result = result.filter(c => c.type === activeTab);
+    }
+    
+    // Then fuzzy search
+    if (!debouncedSearch) return result;
+    
+    const fuse = new Fuse(result, {
+      keys: ['name', 'whatsapp', 'phone', 'city', 'district', 'address'],
+      threshold: 0.3,
+      distance: 100,
+    });
+    
+    return fuse.search(debouncedSearch).map(r => r.item);
+  }, [clients, debouncedSearch, activeTab]);
 
   const handleQuickSale = (client: Client) => {
     // Navigate to new sale with client pre-selected

@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { Search, ShoppingCart, User, Plus, Trash2, CheckCircle2, X, Minus, MapPin, Banknote, Tag, Package } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import { cn } from '../lib/utils';
 import { useLocation } from 'react-router-dom';
+import Fuse from 'fuse.js';
+import { useDebounce } from '../hooks/useDebounce';
 
 export default function NewSale() {
   const location = useLocation();
@@ -14,6 +16,7 @@ export default function NewSale() {
   const [sellers, setSellers] = useState<any[]>([]);
   const [drivers, setDrivers] = useState<any[]>([]);
   const [searchProduct, setSearchProduct] = useState('');
+  const debouncedSearchProduct = useDebounce(searchProduct, 300);
   const [cart, setCart] = useState<any[]>([]);
   const [selectedClient, setSelectedClient] = useState<any>(null);
   const [selectedSeller, setSelectedSeller] = useState<any>(null);
@@ -184,9 +187,18 @@ export default function NewSale() {
     }
   };
 
-  const filteredProducts = products.filter(p => 
-    p.name.toLowerCase().includes(searchProduct.toLowerCase()) && p.active !== false
-  );
+  const filteredProducts = useMemo(() => {
+    let activeProducts = products.filter(p => p.active !== false);
+    
+    if (!debouncedSearchProduct) return activeProducts;
+    
+    const fuse = new Fuse(activeProducts, {
+      keys: ['name'],
+      threshold: 0.3,
+    });
+    
+    return fuse.search(debouncedSearchProduct).map(r => r.item);
+  }, [products, debouncedSearchProduct]);
 
   return (
     <div className="flex flex-col h-[calc(100vh-64px)] overflow-hidden bg-slate-50 font-sans">

@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { Plus, Search, Edit2, Trash2, X, Truck, Phone, Mail, Car, DollarSign } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import { cn } from '../lib/utils';
+import Fuse from 'fuse.js';
+import { useDebounce } from '../hooks/useDebounce';
 
 interface Driver {
   id: string;
@@ -23,6 +25,7 @@ export default function Drivers() {
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounce(search, 300);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editingDriver, setEditingDriver] = useState<Driver | null>(null);
@@ -128,10 +131,16 @@ export default function Drivers() {
     }
   };
 
-  const filteredDrivers = drivers.filter(d => 
-    (d.name || '').toLowerCase().includes(search.toLowerCase()) || 
-    (d.email || '').toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredDrivers = useMemo(() => {
+    if (!debouncedSearch) return drivers;
+    
+    const fuse = new Fuse(drivers, {
+      keys: ['name', 'email', 'phone', 'vehicle', 'vehicle_plate'],
+      threshold: 0.3,
+    });
+    
+    return fuse.search(debouncedSearch).map(r => r.item);
+  }, [drivers, debouncedSearch]);
 
   return (
     <div className="p-4 md:p-8 space-y-6">

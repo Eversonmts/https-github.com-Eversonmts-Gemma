@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { Plus, Search, Edit2, Trash2, X, UserSquare2, Mail, ShieldCheck, BadgeCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import { cn } from '../lib/utils';
+import Fuse from 'fuse.js';
+import { useDebounce } from '../hooks/useDebounce';
 
 interface Seller {
   id: string;
@@ -19,6 +21,7 @@ export default function Sellers() {
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounce(search, 300);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editingSeller, setEditingSeller] = useState<Seller | null>(null);
@@ -127,10 +130,16 @@ export default function Sellers() {
     }
   };
 
-  const filteredSellers = sellers.filter(s => 
-    (s.name || '').toLowerCase().includes(search.toLowerCase()) || 
-    (s.email || '').toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredSellers = useMemo(() => {
+    if (!debouncedSearch) return sellers;
+    
+    const fuse = new Fuse(sellers, {
+      keys: ['name', 'email'],
+      threshold: 0.3,
+    });
+    
+    return fuse.search(debouncedSearch).map(r => r.item);
+  }, [sellers, debouncedSearch]);
 
   return (
     <div className="p-4 md:p-8 space-y-6">

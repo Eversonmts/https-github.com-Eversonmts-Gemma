@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { Plus, Search, Edit2, Trash2, X, Package, Layers, AlertTriangle, Copy, Upload } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import toast from 'react-hot-toast';
 import { cn } from '../lib/utils';
+import Fuse from 'fuse.js';
+import { useDebounce } from '../hooks/useDebounce';
 
 interface KitItem {
   product_id: string;
@@ -30,6 +32,7 @@ export default function Products() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounce(search, 300);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -215,7 +218,17 @@ export default function Products() {
     }
   };
 
-  const filteredProducts = products.filter(p => (p.name || '').toLowerCase().includes(search.toLowerCase()));
+  const filteredProducts = useMemo(() => {
+    if (!debouncedSearch) return products;
+    
+    const fuse = new Fuse(products, {
+      keys: ['name', 'category_id'],
+      threshold: 0.3,
+      distance: 100,
+    });
+    
+    return fuse.search(debouncedSearch).map(result => result.item);
+  }, [products, debouncedSearch]);
 
   return (
     <div className="p-4 md:p-8 space-y-6">
