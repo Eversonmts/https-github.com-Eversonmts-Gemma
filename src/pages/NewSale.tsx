@@ -15,6 +15,7 @@ export default function NewSale() {
   const [clients, setClients] = useState<any[]>([]);
   const [sellers, setSellers] = useState<any[]>([]);
   const [drivers, setDrivers] = useState<any[]>([]);
+  const [currentUser, setCurrentUser] = useState<any>(null);
   const [searchProduct, setSearchProduct] = useState('');
   const debouncedSearchProduct = useDebounce(searchProduct, 300);
   const [cart, setCart] = useState<any[]>([]);
@@ -22,8 +23,8 @@ export default function NewSale() {
   const [selectedSeller, setSelectedSeller] = useState<any>(null);
   const [selectedDriver, setSelectedDriver] = useState<any>(null);
   const [paymentMethod, setPaymentMethod] = useState('pix');
-  const [deliveryFee, setDeliveryFee] = useState(0);
-  const [discount, setDiscount] = useState(0);
+  const [deliveryFee, setDeliveryFee] = useState<any>(0);
+  const [discount, setDiscount] = useState<any>(0);
   const [notes, setNotes] = useState('');
   const [deliveryDate, setDeliveryDate] = useState('');
   const [saving, setSaving] = useState(false);
@@ -46,8 +47,11 @@ export default function NewSale() {
 
   const fetchData = async () => {
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      setCurrentUser(user);
+
       const [p, c, s, d, cfg] = await Promise.all([
-        supabase.from('products').select('*'), // Simpler select
+        supabase.from('products').select('*'),
         supabase.from('clients').select('*'),
         supabase.from('sellers').select('*'),
         supabase.from('drivers').select('*'),
@@ -62,7 +66,21 @@ export default function NewSale() {
           if (client) setSelectedClient(client);
         }
       }
-      if (s.data) setSellers(s.data);
+      
+      if (s.data) {
+        setSellers(s.data);
+        // Tenta auto-vincular o vendedor logado pelo email ou auth_uid
+        if (user) {
+          const matchingSeller = s.data.find(sell => 
+            sell.email === user.email || 
+            sell.auth_uid === user.id
+          );
+          if (matchingSeller) {
+            setSelectedSeller(matchingSeller);
+          }
+        }
+      }
+
       if (d.data) setDrivers(d.data);
       if (cfg.data?.value?.default_delivery_fee) {
         setDeliveryFee(cfg.data.value.default_delivery_fee);
@@ -106,6 +124,7 @@ export default function NewSale() {
 
   const finalizeSale = async () => {
     if (!selectedClient) return toast.error('Selecione um cliente');
+    if (!selectedSeller) return toast.error('Selecione um vendedor');
     if (cart.length === 0) return toast.error('Carrinho vazio');
     
     if (discount > 0 && selectedSeller?.permissions?.can_give_discount === false) {
@@ -116,12 +135,12 @@ export default function NewSale() {
     const tid = toast.loading('Processando venda...');
 
     try {
-      // Helper to validate UUID
-      const isValidUUID = (id: any) => 
-        typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+      const sellerId = (selectedSeller?.id && sellers.some(s => s.id === selectedSeller.id)) ? selectedSeller.id : null;
+      const driverId = (selectedDriver?.id && drivers.some(d => d.id === selectedDriver.id)) ? selectedDriver.id : null;
 
-      const sellerId = (isValidUUID(selectedSeller?.id) && sellers.some(s => s.id === selectedSeller.id)) ? selectedSeller.id : null;
-      const driverId = (isValidUUID(selectedDriver?.id) && drivers.some(d => d.id === selectedDriver.id)) ? selectedDriver.id : null;
+      if (selectedSeller && !sellerId) {
+        throw new Error('O vendedor selecionado é inválido ou não foi encontrado no banco de dados.');
+      }
 
       console.log('Sending payload:', {
         client_id: selectedClient.id,
@@ -136,10 +155,10 @@ export default function NewSale() {
           client_id: selectedClient.id,
           seller_id: sellerId,
           driver_id: driverId,
-          total,
-          subtotal,
-          delivery_fee: deliveryFee,
-          discount,
+          total: Number(total),
+          subtotal: Number(subtotal),
+          delivery_fee: Number(deliveryFee) || 0,
+          discount: Number(discount) || 0,
           payment_method: paymentMethod,
           status: 'novo'
         }])
@@ -152,12 +171,30 @@ export default function NewSale() {
       const orderItems = cart.map(item => ({
         order_id: order.id,
         product_id: item.id,
+        name: item.name,
         quantity: item.quantity,
+        price: item.sale_price,
         unit_price: item.sale_price,
+        total_price: Number(item.sale_price) * item.quantity,
         commission: item.commission_value || 0
       }));
 
-      const { error: itemsErr } = await supabase.from('order_items').insert(orderItems);
+      let { error: itemsErr } = await supabase.from('order_items').insert(orderItems);
+      
+      if (itemsErr && (itemsErr.message?.includes('column "price"') || itemsErr?.message?.includes('column "total_price"') || itemsErr?.message?.includes('column "unit_price"'))) {
+        console.warn('Retrying save without some columns due to schema cache issues');
+        const retryItems = orderItems.map(item => {
+          const { price, total_price, unit_price, ...rest } = item as any;
+          const newItem: any = { ...rest };
+          if (!itemsErr?.message?.includes('column "price"')) newItem.price = price;
+          if (!itemsErr?.message?.includes('column "total_price"')) newItem.total_price = total_price;
+          if (!itemsErr?.message?.includes('column "unit_price"')) newItem.unit_price = unit_price;
+          return newItem;
+        });
+        const result = await supabase.from('order_items').insert(retryItems);
+        itemsErr = result.error;
+      }
+
       if (itemsErr) throw itemsErr;
 
       // 3. Update Stock & Movements
@@ -165,7 +202,7 @@ export default function NewSale() {
         const product = products.find(p => p.id === item.id);
         if (!product) continue;
 
-        if (product.type === 'kit' && product.kit_items) {
+        if ((product.type === 'kit' || product.is_virtual) && product.kit_items) {
           for (const kitItem of product.kit_items) {
             const qtyToDeduct = item.quantity * kitItem.quantity;
             
@@ -178,11 +215,11 @@ export default function NewSale() {
                product_id: kitItem.product_id,
                type: 'out',
                quantity: qtyToDeduct,
-               reason: `Venda #${order.id.slice(-6)} (Kit: ${product.name})`
+               reason: `Venda #${order.id.slice(-6)} (${product.type === 'kit' ? 'Kit' : 'Produzido'}: ${product.name})`
             });
           }
-        } else {
-          // Simple item
+        } else if (product.type !== 'kit') {
+          // Simple item (not kit and not virtual producer)
           const { data: pData } = await supabase.from('products').select('stock').eq('id', item.id).single();
           const currentStock = pData?.stock ?? 0;
 
@@ -355,7 +392,7 @@ export default function NewSale() {
                  <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
                       <label className="text-[10px] font-bold text-slate-400 uppercase">Taxa Entrega</label>
-                      <input type="number" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold" value={deliveryFee} onChange={e => setDeliveryFee(parseFloat(e.target.value) || 0)} />
+                      <input type="number" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold" value={deliveryFee === 0 ? '' : deliveryFee} onChange={e => setDeliveryFee(e.target.value)} placeholder="0" />
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] font-bold text-slate-400 uppercase">Desconto</label>
@@ -363,8 +400,9 @@ export default function NewSale() {
                         type="number" 
                         disabled={selectedSeller?.permissions?.can_give_discount === false}
                         className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold disabled:opacity-50" 
-                        value={discount} 
-                        onChange={e => setDiscount(parseFloat(e.target.value) || 0)} 
+                        value={discount === 0 ? '' : discount} 
+                        onChange={e => setDiscount(e.target.value)} 
+                        placeholder="0"
                       />
                     </div>
                  </div>

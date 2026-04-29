@@ -45,6 +45,10 @@ BEGIN
   -- If it's the owner, also add to admins table
   IF NEW.email = 'mattos.mmn@gmail.com' THEN
     INSERT INTO public.admins (user_id) VALUES (NEW.id) ON CONFLICT DO NOTHING;
+    -- Also make the owner a seller by default so they can make sales
+    INSERT INTO public.sellers (name, email, auth_uid, active)
+    VALUES (NEW.raw_user_meta_data->>'name', NEW.email, NEW.id, TRUE)
+    ON CONFLICT (email) DO UPDATE SET auth_uid = EXCLUDED.auth_uid;
   END IF;
 
   RETURN NEW;
@@ -183,7 +187,7 @@ CREATE TABLE IF NOT EXISTS public.products (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name TEXT NOT NULL,
     category_id TEXT DEFAULT 'geral',
-    type TEXT DEFAULT 'simple' CHECK (type IN ('simple', 'kit')),
+    type TEXT DEFAULT 'simple' CHECK (type IN ('simple', 'kit', 'raw_material')),
     cost_price DECIMAL DEFAULT 0,
     sale_price DECIMAL DEFAULT 0,
     stock INTEGER DEFAULT 0,
@@ -191,6 +195,7 @@ CREATE TABLE IF NOT EXISTS public.products (
     commission_value DECIMAL DEFAULT 0,
     active BOOLEAN DEFAULT TRUE,
     image_url TEXT,
+    is_virtual BOOLEAN DEFAULT false,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -213,6 +218,14 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='min_stock') THEN
         ALTER TABLE public.products ADD COLUMN min_stock INTEGER DEFAULT 5;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='is_virtual') THEN
+        ALTER TABLE public.products ADD COLUMN is_virtual BOOLEAN DEFAULT false;
+    END IF;
+    -- Update type constraint to allow raw_material
+    -- Fix: Ensure all rows have valid type before applying constraint
+    UPDATE public.products SET type = 'simple' WHERE type IS NULL OR type NOT IN ('simple', 'kit', 'raw_material');
+    ALTER TABLE public.products DROP CONSTRAINT IF EXISTS products_type_check;
+    ALTER TABLE public.products ADD CONSTRAINT products_type_check CHECK (type IN ('simple', 'kit', 'raw_material'));
 END $$;
 
 -- 6. Kit Composition (Relationship)
@@ -227,8 +240,8 @@ CREATE TABLE IF NOT EXISTS public.kit_items (
 CREATE TABLE IF NOT EXISTS public.orders (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     client_id UUID REFERENCES public.clients(id),
-    seller_id UUID REFERENCES public.sellers(id),
-    driver_id UUID REFERENCES public.drivers(id),
+    seller_id UUID REFERENCES public.sellers(id) ON DELETE SET NULL,
+    driver_id UUID REFERENCES public.drivers(id) ON DELETE SET NULL,
     total DECIMAL DEFAULT 0,
     subtotal DECIMAL DEFAULT 0,
     delivery_fee DECIMAL DEFAULT 0,
@@ -262,13 +275,45 @@ CREATE TABLE IF NOT EXISTS public.order_items (
     name TEXT,
     quantity INTEGER DEFAULT 1,
     price DECIMAL NOT NULL,
+    unit_price DECIMAL DEFAULT 0,
+    total_price DECIMAL DEFAULT 0,
     commission DECIMAL DEFAULT 0
 );
 
+-- 8.1 Order Items Column Verification
 DO $$ 
 BEGIN 
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='order_items' AND column_name='commission') THEN
         ALTER TABLE public.order_items ADD COLUMN commission DECIMAL DEFAULT 0;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='order_items' AND column_name='price') THEN
+        ALTER TABLE public.order_items ADD COLUMN price DECIMAL DEFAULT 0;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='order_items' AND column_name='unit_price') THEN
+        ALTER TABLE public.order_items ADD COLUMN unit_price DECIMAL DEFAULT 0;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='order_items' AND column_name='total_price') THEN
+        ALTER TABLE public.order_items ADD COLUMN total_price DECIMAL DEFAULT 0;
+    END IF;
+END $$;
+
+-- 8.2 Order Foreign Key Robustness
+DO $$ 
+BEGIN 
+    -- Ensure seller_id and driver_id have correct constraints
+    ALTER TABLE public.orders DROP CONSTRAINT IF EXISTS orders_seller_id_fkey;
+    ALTER TABLE public.orders ADD CONSTRAINT orders_seller_id_fkey FOREIGN KEY (seller_id) REFERENCES public.sellers(id) ON DELETE SET NULL;
+    
+    ALTER TABLE public.orders DROP CONSTRAINT IF EXISTS orders_driver_id_fkey;
+    ALTER TABLE public.orders ADD CONSTRAINT orders_driver_id_fkey FOREIGN KEY (driver_id) REFERENCES public.drivers(id) ON DELETE SET NULL;
+
+    -- Migration: Ensure owner is a seller
+    IF EXISTS (SELECT 1 FROM public.profiles WHERE email = 'mattos.mmn@gmail.com') THEN
+        INSERT INTO public.sellers (name, email, auth_uid, active)
+        SELECT name, email, id, TRUE 
+        FROM public.profiles 
+        WHERE email = 'mattos.mmn@gmail.com'
+        ON CONFLICT (email) DO UPDATE SET auth_uid = EXCLUDED.auth_uid;
     END IF;
 END $$;
 

@@ -16,7 +16,7 @@ interface Product {
   id: string;
   name: string;
   category_id: string;
-  type: 'simple' | 'kit';
+  type: 'simple' | 'kit' | 'raw_material';
   cost_price: number;
   sale_price: number;
   stock: number;
@@ -25,6 +25,7 @@ interface Product {
   active: boolean;
   image_url: string;
   kit_items?: KitItem[];
+  is_virtual?: boolean;
   created_at: string;
 }
 
@@ -37,18 +38,19 @@ export default function Products() {
   const [saving, setSaving] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
 
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<any>({
     name: '',
     category_id: '',
-    type: 'simple' as 'simple' | 'kit',
-    cost_price: 0,
-    sale_price: 0,
-    stock: 0,
+    type: 'simple',
+    cost_price: '',
+    sale_price: '',
+    stock: '',
     min_stock: 5,
-    commission_value: 0,
+    commission_value: '',
     active: true,
     image_url: '',
     kit_items: [] as KitItem[],
+    is_virtual: false
   });
 
   const fetchProducts = async () => {
@@ -126,8 +128,9 @@ export default function Products() {
 
   const calculateVirtualStock = (p: Product) => {
     const currentStock = p.stock ?? 0;
-    if (p.type === 'simple') return currentStock;
-    if (!p.kit_items || p.kit_items.length === 0) return 0;
+    if (p.type === 'raw_material') return currentStock;
+    if (p.type === 'simple' && !p.is_virtual) return currentStock;
+    if (!p.kit_items || p.kit_items.length === 0) return p.is_virtual ? 0 : currentStock;
 
     const stocks = p.kit_items.map(item => {
       const root = products.find(prod => prod.id === item.product_id);
@@ -143,21 +146,22 @@ export default function Products() {
       name: '',
       category_id: '',
       type: 'simple',
-      cost_price: 0,
-      sale_price: 0,
-      stock: 0,
+      cost_price: '',
+      sale_price: '',
+      stock: '',
       min_stock: 5,
-      commission_value: 0,
+      commission_value: '',
       active: true,
       image_url: '',
       kit_items: [],
+      is_virtual: false
     });
     setEditingProduct(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name || formData.sale_price <= 0) {
+    if (!formData.name || (formData.type !== 'raw_material' && Number(formData.sale_price) <= 0)) {
       toast.error('Preencha os campos obrigatórios');
       return;
     }
@@ -172,39 +176,56 @@ export default function Products() {
       const isValidUUID = (uuid: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uuid);
       const catId = isValidUUID(cleanData.category_id) ? cleanData.category_id : null;
 
-      const productPayload = {
+      const productPayload: any = {
         name: cleanData.name,
         category_id: catId,
         type: cleanData.type,
-        cost_price: cleanData.cost_price,
-        sale_price: cleanData.sale_price,
-        stock: cleanData.stock,
-        min_stock: cleanData.min_stock,
-        commission_value: cleanData.commission_value,
+        cost_price: Number(cleanData.cost_price) || 0,
+        sale_price: Number(cleanData.sale_price) || 0,
+        stock: (cleanData.is_virtual || cleanData.type === 'kit') ? 0 : (Number(cleanData.stock) || 0),
+        min_stock: Number(cleanData.min_stock) || 0,
+        commission_value: Number(cleanData.commission_value) || 0,
         active: cleanData.active,
         image_url: cleanData.image_url,
+        is_virtual: cleanData.is_virtual || cleanData.type === 'kit',
         updated_at: new Date().toISOString()
       };
 
       let productId = editingProduct?.id;
+      let saveError;
 
-      if (editingProduct) {
-        const { error } = await supabase
-          .from('products')
-          .update(productPayload)
-          .eq('id', editingProduct.id);
-        if (error) throw error;
-      } else {
-        const { data, error } = await supabase
-          .from('products')
-          .insert([productPayload])
-          .select();
-        if (error) throw error;
-        productId = data[0].id;
+      const attemptSave = async (payload: any) => {
+        if (editingProduct) {
+          return supabase.from('products').update(payload).eq('id', editingProduct.id);
+        } else {
+          return supabase.from('products').insert([payload]).select();
+        }
+      };
+
+      let result = await attemptSave(productPayload);
+      
+      // Fallback 1: Column 'is_virtual' might be missing
+      if (result.error && result.error.message?.includes('is_virtual')) {
+        console.warn('Fallback: Saving without is_virtual column');
+        const { is_virtual, ...fallbackPayload } = productPayload;
+        result = await attemptSave(fallbackPayload);
       }
 
-      // Handle Kit Items
-      if (formData.type === 'kit' && productId) {
+      // Fallback 2: Constraint 'products_type_check' might not allow 'raw_material' yet
+      if (result.error && (result.error.message?.includes('products_type_check') || result.error.code === '23514') && productPayload.type === 'raw_material') {
+        console.warn('Fallback: Saving raw_material as simple due to constraint restriction');
+        const fallbackPayload = { ...productPayload, type: 'simple' };
+        result = await attemptSave(fallbackPayload);
+      }
+
+      if (result.error) throw result.error;
+      
+      if (!editingProduct && result.data) {
+        productId = result.data[0].id;
+      }
+
+      // Handle Kit Items / Raw Material Composition
+      if ((formData.type === 'kit' || formData.is_virtual) && productId) {
         // Clear existing kit items
         await supabase.from('kit_items').delete().eq('kit_id', productId);
         
@@ -252,14 +273,15 @@ export default function Products() {
       name: p.name,
       category_id: p.category_id,
       type: p.type,
-      cost_price: p.cost_price,
-      sale_price: p.sale_price,
-      stock: p.stock,
+      cost_price: p.cost_price === 0 ? '' : p.cost_price,
+      sale_price: p.sale_price === 0 ? '' : p.sale_price,
+      stock: p.stock === 0 ? '' : p.stock,
       min_stock: p.min_stock,
-      commission_value: p.commission_value || 0,
+      commission_value: p.commission_value === 0 ? '' : p.commission_value,
       active: p.active,
       image_url: p.image_url || '',
       kit_items: p.kit_items || [],
+      is_virtual: p.is_virtual || false
     });
     setIsModalOpen(true);
   };
@@ -373,12 +395,20 @@ export default function Products() {
                       </div>
                       <div>
                         <div className="font-bold text-slate-900">{p.name || 'Sem Nome'}</div>
-                        <div className="text-[10px] text-slate-400 uppercase font-bold tracking-tight">{p.type === 'kit' ? 'Kit / Combo' : 'Simples'}</div>
+                        <div className="text-[10px] text-slate-400 uppercase font-bold tracking-tight">
+                          {p.type === 'kit' ? 'Kit / Combo' : p.type === 'raw_material' ? 'Matéria-Prima' : 'Simples'}
+                          {p.is_virtual && ' • Estoque Virtual'}
+                        </div>
                       </div>
                     </div>
                   </td>
                   <td className="px-6 py-4 text-slate-600 text-sm">{p.category_id}</td>
-                  <td className="px-6 py-4 font-bold text-slate-900">R$ {p.sale_price.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                  <td className="px-6 py-4 font-bold text-slate-900">
+                    {p.type === 'raw_material' && (p.sale_price === 0 || !p.sale_price) 
+                      ? <span className="text-slate-400 font-normal">N/A</span>
+                      : `R$ ${p.sale_price.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+                    }
+                  </td>
                   <td className="px-6 py-4">
                     <div className={cn("flex items-center gap-2 font-bold", calculateVirtualStock(p) <= p.min_stock ? "text-red-500" : "text-slate-600")}>
                       {calculateVirtualStock(p)}
@@ -416,18 +446,29 @@ export default function Products() {
 
               <form onSubmit={handleSubmit} className="p-8 space-y-6 max-h-[75vh] overflow-y-auto">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="md:col-span-2 space-y-2">
+                  <div className="md:col-span-1 space-y-2">
                     <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Nome do Produto *</label>
                     <input required type="text" className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none" value={formData.name} onChange={(e) => setFormData({...formData, name: e.target.value})} />
                   </div>
                   
                   <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Tipo</label>
-                    <select className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none appearance-none" value={formData.type} onChange={(e) => setFormData({...formData, type: e.target.value as any})}>
-                      <option value="simple">Produto Simples</option>
-                      <option value="kit">Kit / Combo</option>
+                    <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Tipo de Cadastro</label>
+                    <select className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none appearance-none font-bold text-slate-700" value={formData.type} onChange={(e) => setFormData({...formData, type: e.target.value as any, is_virtual: e.target.value === 'kit' ? true : formData.is_virtual})}>
+                      <option value="simple">Produto Final (Simples)</option>
+                      <option value="kit">Produto Kit / Combo</option>
+                      <option value="raw_material">Matéria-Prima</option>
                     </select>
                   </div>
+
+                  {formData.type === 'simple' && (
+                    <div className="md:col-span-2 flex items-center gap-3 bg-blue-50 p-4 rounded-xl border border-blue-100">
+                       <input type="checkbox" id="is_virtual" checked={formData.is_virtual} onChange={(e) => setFormData({...formData, is_virtual: e.target.checked})} className="w-5 h-5 accent-primary" />
+                       <label htmlFor="is_virtual" className="text-sm font-bold text-blue-800 flex flex-col">
+                         <span>Estoque Virtual (Dará baixa em matérias primas)</span>
+                         <span className="text-[10px] font-medium opacity-70">Marque esta opção se este produto for produzido a partir de ingredientes.</span>
+                       </label>
+                    </div>
+                  )}
 
                   <div className="space-y-2 md:col-span-2">
                     <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Imagem do Produto</label>
@@ -461,37 +502,47 @@ export default function Products() {
 
                   <div className="space-y-2">
                     <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Preço de Custo (R$)</label>
-                    <input type="number" step="0.01" className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none" value={formData.cost_price} onChange={(e) => setFormData({...formData, cost_price: parseFloat(e.target.value)})} />
+                    <input type="number" step="0.01" className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none font-bold" value={formData.cost_price} onChange={(e) => setFormData({...formData, cost_price: e.target.value})} placeholder="R$ 0,00" />
                   </div>
 
                   <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Preço de Venda (R$) *</label>
-                    <input required type="number" step="0.01" className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none" value={formData.sale_price} onChange={(e) => setFormData({...formData, sale_price: parseFloat(e.target.value)})} />
+                    <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                      Preço de Venda (R$){formData.type !== 'raw_material' ? ' *' : ''}
+                    </label>
+                    <input 
+                      required={formData.type !== 'raw_material'} 
+                      type="number" 
+                      step="0.01" 
+                      className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none font-bold" 
+                      value={formData.sale_price} 
+                      onChange={(e) => setFormData({...formData, sale_price: e.target.value})} 
+                      placeholder="R$ 0,00" 
+                    />
                   </div>
 
-                  {formData.type === 'simple' ? (
+                  {(formData.type !== 'kit' && !formData.is_virtual) ? (
                     <div className="space-y-2">
                        <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Estoque Atual</label>
-                       <input type="number" className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none" value={formData.stock} onChange={(e) => setFormData({...formData, stock: parseInt(e.target.value)})} />
+                       <input type="number" className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none font-bold" value={formData.stock} onChange={(e) => setFormData({...formData, stock: e.target.value})} placeholder="0" />
                     </div>
                   ) : (
                     <div className="md:col-span-2 space-y-4 bg-slate-50 p-6 rounded-2xl border border-slate-100">
                       <div className="flex items-center justify-between">
-                         <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Composição do Kit (Produtos Base)</label>
+                         <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Composição / Receita (Matérias-Primas)</label>
                          <button 
                            type="button"
                            onClick={() => setFormData({...formData, kit_items: [...formData.kit_items, { product_id: '', quantity: 1 }]})}
                            className="text-xs font-bold text-primary flex items-center gap-1 hover:underline"
                         >
-                           <Plus className="w-3 h-3" /> Adicionar Item
+                           <Plus className="w-3 h-3" /> Adicionar Matéria-Prima
                          </button>
                       </div>
                       
-                      {formData.kit_items.map((item, idx) => (
+                      {formData.kit_items.map((item: any, idx: number) => (
                         <div key={idx} className="flex gap-3 items-end">
                            <div className="flex-1 space-y-1">
                               <select 
-                                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none"
+                                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none font-bold"
                                 value={item.product_id}
                                 onChange={(e) => {
                                   const newItems = [...formData.kit_items];
@@ -499,9 +550,9 @@ export default function Products() {
                                   setFormData({...formData, kit_items: newItems});
                                 }}
                               >
-                                <option value="">Selecionar Produto...</option>
-                                {products.filter(prod => prod.type === 'simple').map(prod => (
-                                  <option key={prod.id} value={prod.id}>{prod.name} (Saldo: {prod.stock})</option>
+                                <option value="">Selecionar...</option>
+                                {products.filter(prod => prod.type === 'raw_material' || prod.type === 'simple').map(prod => (
+                                  <option key={prod.id} value={prod.id}>{prod.name} (Saldo: {calculateVirtualStock(prod)})</option>
                                 ))}
                               </select>
                            </div>
@@ -509,11 +560,12 @@ export default function Products() {
                               <input 
                                 type="number" 
                                 min="1"
+                                placeholder="Qtd"
                                 className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none font-bold"
                                 value={item.quantity}
                                 onChange={(e) => {
                                   const newItems = [...formData.kit_items];
-                                  newItems[idx].quantity = parseInt(e.target.value);
+                                  newItems[idx].quantity = parseInt(e.target.value) || 0;
                                   setFormData({...formData, kit_items: newItems});
                                 }}
                               />
@@ -530,7 +582,7 @@ export default function Products() {
                       
                       {formData.kit_items.length > 0 && (
                         <div className="text-[11px] text-slate-500 italic bg-white/50 p-2 rounded-lg border border-slate-100">
-                          O estoque deste kit será calculado automaticamente com base no saldo dos produtos selecionados acima.
+                          O estoque deste item será calculado automaticamente com base no saldo dos componentes acima.
                         </div>
                       )}
                     </div>
@@ -538,12 +590,12 @@ export default function Products() {
 
                   <div className="space-y-2">
                     <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Estoque Mínimo (Alerta)</label>
-                    <input type="number" className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none" value={formData.min_stock} onChange={(e) => setFormData({...formData, min_stock: parseInt(e.target.value)})} />
+                    <input type="number" className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none font-bold" value={formData.min_stock} onChange={(e) => setFormData({...formData, min_stock: e.target.value})} placeholder="5" />
                   </div>
 
                   <div className="space-y-2">
                     <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Comissão (R$ Fixo)</label>
-                    <input type="number" step="0.01" className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none" value={formData.commission_value} onChange={(e) => setFormData({...formData, commission_value: parseFloat(e.target.value)})} />
+                    <input type="number" step="0.01" className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 outline-none font-bold" value={formData.commission_value} onChange={(e) => setFormData({...formData, commission_value: e.target.value})} placeholder="R$ 0,00" />
                   </div>
 
                   <div className="flex items-center gap-3 pt-8">

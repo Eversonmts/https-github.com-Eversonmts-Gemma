@@ -14,7 +14,13 @@ import {
   MapPin,
   Phone,
   MessageCircle,
-  ShoppingBag
+  ShoppingBag,
+  Edit3,
+  RefreshCcw,
+  ShieldCheck,
+  ShieldAlert,
+  Save,
+  Trash
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -24,13 +30,46 @@ import Fuse from 'fuse.js';
 import { useDebounce } from '../hooks/useDebounce';
 
 export default function Orders() {
-  const { isDriver, isSeller, isAdmin, profile } = useAuth();
+  const { isDriver: realIsDriver, isSeller: realIsSeller, isAdmin: realIsAdmin, profile } = useAuth();
+  
+  // Role Simulation State
+  const [simulatedRole, setSimulatedRole] = useState<'admin' | 'seller' | 'driver' | null>(null);
+  
+  const isAdmin = simulatedRole ? simulatedRole === 'admin' : realIsAdmin;
+  const isSeller = simulatedRole ? (simulatedRole === 'seller' || simulatedRole === 'admin') : realIsSeller;
+  const isDriver = simulatedRole ? (simulatedRole === 'driver' || simulatedRole === 'admin') : realIsDriver;
+
   const [orders, setOrders] = useState<any[]>([]);
   const [statuses, setStatuses] = useState<any[]>([]);
+  const [sellers, setSellers] = useState<any[]>([]);
+  const [drivers, setDrivers] = useState<any[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
+  
   const [activeTab, setActiveTab] = useState('');
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounce(search, 300);
+
+  // Edit Modal State
+  const [editingOrder, setEditingOrder] = useState<any>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editFormData, setEditFormData] = useState<any>({
+    items: [],
+    delivery_fee: 0,
+    seller_id: '',
+    driver_id: ''
+  });
+
+  const fetchAuxData = async () => {
+    const [s, d, p] = await Promise.all([
+      supabase.from('sellers').select('*'),
+      supabase.from('drivers').select('*'),
+      supabase.from('products').select('*')
+    ]);
+    if (s.data) setSellers(s.data);
+    if (d.data) setDrivers(d.data);
+    if (p.data) setProducts(p.data);
+  };
 
   const fetchOrders = async () => {
     const { data: oData } = await supabase
@@ -38,8 +77,8 @@ export default function Orders() {
       .select(`
         *, 
         clients(name, phone, address), 
-        seller:seller_id(full_name), 
-        driver:driver_id(full_name), 
+        seller:seller_id(name), 
+        driver:driver_id(name), 
         order_items(*, products(name))
       `);
     if (oData) setOrders(oData);
@@ -74,6 +113,7 @@ export default function Orders() {
     
     fetchStatuses();
     fetchOrders();
+    if (realIsAdmin) fetchAuxData();
 
     const channel = supabase
       .channel('public:orders')
@@ -151,8 +191,154 @@ export default function Orders() {
     return fuse.search(debouncedSearch).map(r => r.item);
   }, [orders, activeTab, isAdmin, isSeller, isDriver, profile, debouncedSearch]);
 
+  const openEditModal = (order: any) => {
+    setEditingOrder(order);
+    setEditFormData({
+      items: order.order_items || [],
+      delivery_fee: order.delivery_fee || 0,
+      seller_id: order.seller_id || '',
+      driver_id: order.driver_id || ''
+    });
+    setIsEditModalOpen(true);
+  };
+
+  const handleUpdateOrder = async () => {
+    if (!editingOrder) return;
+    const tid = toast.loading('Calculando e salvando...');
+    try {
+      // 1. Atualiza itens do pedido (simplificado: remove antigos e insere novos)
+      // Nota: Em produção, seria melhor fazer um diff real.
+      await supabase.from('order_items').delete().eq('order_id', editingOrder.id);
+      const itemsToInsert = editFormData.items.map((item: any) => ({
+        order_id: editingOrder.id,
+        product_id: item.product_id,
+        name: item.products?.name || item.name || 'Produto',
+        quantity: item.quantity,
+        price: item.unit_price,
+        unit_price: item.unit_price,
+        total_price: Number(item.unit_price) * item.quantity,
+        commission: item.commission || 0
+      }));
+
+      let itemsResult = await supabase.from('order_items').insert(itemsToInsert);
+
+      if (itemsResult.error && (itemsResult.error.message?.includes('column "price"') || itemsResult.error.message?.includes('column "total_price"') || itemsResult.error.message?.includes('column "unit_price"'))) {
+        console.warn('Retrying update without some columns due to schema cache issues');
+        const retryItems = itemsToInsert.map(item => {
+          const { price, total_price, unit_price, ...rest } = item as any;
+          const newItem: any = { ...rest };
+          if (!itemsResult.error?.message?.includes('column "price"')) newItem.price = price;
+          if (!itemsResult.error?.message?.includes('column "total_price"')) newItem.total_price = total_price;
+          if (!itemsResult.error?.message?.includes('column "unit_price"')) newItem.unit_price = unit_price;
+          return newItem;
+        });
+        itemsResult = await supabase.from('order_items').insert(retryItems);
+      }
+
+      if (itemsResult.error) throw itemsResult.error;
+
+      // 2. Calcula novo total
+      const subtotal = editFormData.items.reduce((acc: number, item: any) => acc + (Number(item.unit_price) * item.quantity), 0);
+      const total = subtotal + Number(editFormData.delivery_fee) - (Number(editingOrder.discount) || 0);
+
+      // 3. Atualiza pedido
+      const sellerIdToSave = (editFormData.seller_id && sellers.some(s => s.id === editFormData.seller_id)) ? editFormData.seller_id : null;
+      const driverIdToSave = (editFormData.driver_id && drivers.some(d => d.id === editFormData.driver_id)) ? editFormData.driver_id : null;
+
+      const { error } = await supabase
+        .from('orders')
+        .update({
+          delivery_fee: Number(editFormData.delivery_fee),
+          seller_id: sellerIdToSave,
+          driver_id: driverIdToSave,
+          subtotal: Number(subtotal),
+          total: Number(total),
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', editingOrder.id);
+
+      if (error) throw error;
+      
+      toast.success('Pedido atualizado com sucesso!', { id: tid });
+      setIsEditModalOpen(false);
+      fetchOrders();
+    } catch (err: any) {
+      toast.error('Erro ao salvar: ' + err.message, { id: tid });
+    }
+  };
+
+  const addItemToOrder = (productId: string) => {
+    const product = products.find(p => p.id === productId);
+    if (!product) return;
+    
+    setEditFormData({
+      ...editFormData,
+      items: [...editFormData.items, {
+        product_id: product.id,
+        products: { name: product.name },
+        quantity: 1,
+        unit_price: product.sale_price,
+        commission: product.commission_value || 0
+      }]
+    });
+  };
+
+  const removeItemFromOrder = (idx: number) => {
+    const newItems = [...editFormData.items];
+    newItems.splice(idx, 1);
+    setEditFormData({ ...editFormData, items: newItems });
+  };
+
+  const updateItemQuantity = (idx: number, qty: number) => {
+    const newItems = [...editFormData.items];
+    newItems[idx].quantity = Math.max(1, qty);
+    setEditFormData({ ...editFormData, items: newItems });
+  };
+
   return (
-    <div className="p-4 md:p-8 space-y-6 text-left">
+    <div className="p-4 md:p-8 space-y-6 text-left pb-24">
+      {/* Botões de Simulação para Teste */}
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2 scale-90 md:scale-100 origin-bottom-right">
+        <label className="text-[10px] font-black text-slate-400 uppercase text-right mr-2 tracking-tighter">Simular Visão</label>
+        <div className="flex flex-col gap-2 bg-white/80 backdrop-blur-md p-2 rounded-2xl border border-slate-200 shadow-2xl">
+          <button 
+            onClick={() => setSimulatedRole(null)}
+            className={cn(
+              "p-3 rounded-xl transition-all flex items-center justify-center gap-2 text-xs font-bold whitespace-nowrap",
+              !simulatedRole ? "bg-primary text-white" : "bg-slate-50 text-slate-400 hover:bg-slate-100"
+            )}
+          >
+            <RefreshCcw className="w-4 h-4" /> Real
+          </button>
+          <button 
+            onClick={() => setSimulatedRole('admin')}
+            className={cn(
+              "p-3 rounded-xl transition-all flex items-center justify-center gap-2 text-xs font-bold whitespace-nowrap",
+              simulatedRole === 'admin' ? "bg-slate-900 text-white" : "bg-slate-50 text-slate-400 hover:bg-slate-100"
+            )}
+          >
+            <ShieldCheck className="w-4 h-4" /> Admin
+          </button>
+          <button 
+            onClick={() => setSimulatedRole('seller')}
+            className={cn(
+              "p-3 rounded-xl transition-all flex items-center justify-center gap-2 text-xs font-bold whitespace-nowrap",
+              simulatedRole === 'seller' ? "bg-orange-500 text-white" : "bg-slate-50 text-slate-400 hover:bg-slate-100"
+            )}
+          >
+            <User className="w-4 h-4" /> Vendedor
+          </button>
+          <button 
+            onClick={() => setSimulatedRole('driver')}
+            className={cn(
+              "p-3 rounded-xl transition-all flex items-center justify-center gap-2 text-xs font-bold whitespace-nowrap",
+              simulatedRole === 'driver' ? "bg-purple-600 text-white" : "bg-slate-50 text-slate-400 hover:bg-slate-100"
+            )}
+          >
+            <Truck className="w-4 h-4" /> Entregador
+          </button>
+        </div>
+      </div>
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-slate-900 font-display">Pedidos</h1>
@@ -325,22 +511,30 @@ export default function Orders() {
                             <label className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">Vendido por</label>
                             <div className="flex items-center gap-1.5">
                               <User className="w-3 h-3 text-slate-400" />
-                              <span className="text-[11px] font-bold text-slate-600">{order.seller?.full_name || 'Venda Direta'}</span>
+                              <span className="text-[11px] font-bold text-slate-600">{order.seller?.name || 'Venda Direta'}</span>
                             </div>
                           </div>
                           <div className="space-y-1">
                             <label className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">Entregador</label>
                             <div className="flex items-center gap-1.5">
                               <Truck className="w-3 h-3 text-slate-400" />
-                              <span className="text-[11px] font-bold text-slate-600">{order.driver?.full_name || 'A definir'}</span>
+                              <span className="text-[11px] font-bold text-slate-600">{order.driver?.name || 'A definir'}</span>
                             </div>
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
-                          {nextStatus && (
-                            <button 
-                              onClick={() => updateStatus(order.id, nextStatus.id)} 
+                          <div className="flex items-center gap-2">
+                             {isAdmin && (
+                               <button 
+                                 onClick={() => openEditModal(order)}
+                                 className="p-2 text-primary hover:bg-primary/10 rounded-xl transition-colors bg-primary/5 border border-primary/10"
+                               >
+                                 <Edit3 className="w-4 h-4" />
+                               </button>
+                             )}
+                             {nextStatus && (
+                               <button 
+                                 onClick={() => updateStatus(order.id, nextStatus.id)} 
                               className={cn(
                                 "px-6 py-2.5 rounded-xl text-xs font-black text-white transition-all transform hover:scale-105 active:scale-95 shadow-lg",
                                 nextStatus.color === 'emerald' ? "bg-emerald-600 shadow-emerald-200" :
@@ -389,6 +583,111 @@ export default function Orders() {
           )}
         </AnimatePresence>
       </div>
+
+      {/* Modal de Edição (Admin) */}
+      <AnimatePresence>
+        {isEditModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsEditModalOpen(false)} className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" />
+            <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="relative bg-white w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[85vh]">
+              <div className="p-6 border-b flex justify-between items-center bg-slate-50">
+                <div>
+                   <h3 className="font-black text-slate-900 text-lg uppercase tracking-tight">Editar Pedido</h3>
+                   <span className="text-xs font-bold text-slate-400">#{editingOrder?.id.slice(-6).toUpperCase()}</span>
+                </div>
+                <button onClick={() => setIsEditModalOpen(false)} className="p-2 hover:bg-slate-200 rounded-full transition-colors"><XCircle className="w-5 h-5 text-slate-300" /></button>
+              </div>
+
+              <div className="p-6 flex-1 overflow-y-auto space-y-6 scrollbar-hide">
+                {/* Itens do Pedido */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Produtos / Quantidade</label>
+                    <div className="relative group">
+                       <select 
+                         className="px-3 py-1 bg-primary/10 text-primary border border-primary/20 rounded-lg text-[10px] font-black uppercase appearance-none"
+                         onChange={(e) => {
+                           if (e.target.value) addItemToOrder(e.target.value);
+                           e.target.value = '';
+                         }}
+                       >
+                         <option value="">+ Add Produto</option>
+                         {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                       </select>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    {editFormData.items.map((item: any, idx: number) => (
+                      <div key={idx} className="flex items-center gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                        <div className="flex-1">
+                          <p className="text-xs font-bold text-slate-800">{item.products?.name || 'Produto'}</p>
+                          <p className="text-[10px] font-medium text-slate-400">R$ {item.unit_price?.toFixed(2)} / un</p>
+                        </div>
+                        <div className="flex items-center gap-2 bg-white rounded-xl border border-slate-200 p-1">
+                          <button onClick={() => updateItemQuantity(idx, item.quantity - 1)} className="p-1 hover:bg-slate-50 rounded-lg"><Clock className="w-3 h-3 text-slate-400 rotate-180" /></button>
+                          <span className="w-6 text-center text-xs font-black">{item.quantity}</span>
+                          <button onClick={() => updateItemQuantity(idx, item.quantity + 1)} className="p-1 hover:bg-slate-50 rounded-lg"><RefreshCcw className="w-3 h-3 text-slate-400" /></button>
+                        </div>
+                        <button onClick={() => removeItemFromOrder(idx)} className="p-2 text-red-400 hover:bg-red-50 rounded-xl"><Trash className="w-4 h-4" /></button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Taxa de Entrega</label>
+                    <input 
+                      type="number" 
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none text-sm font-bold"
+                      value={editFormData.delivery_fee}
+                      onChange={(e) => setEditFormData({ ...editFormData, delivery_fee: parseFloat(e.target.value) || 0 })}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Vendedor</label>
+                    <select 
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none text-sm font-bold appearance-none"
+                      value={editFormData.seller_id}
+                      onChange={(e) => setEditFormData({ ...editFormData, seller_id: e.target.value })}
+                    >
+                      <option value="">Selecione...</option>
+                      {sellers.map(s => <option key={s.id} value={s.id}>{s.name || s.full_name}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Entregador</label>
+                  <select 
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none text-sm font-bold appearance-none"
+                    value={editFormData.driver_id}
+                    onChange={(e) => setEditFormData({ ...editFormData, driver_id: e.target.value })}
+                  >
+                    <option value="">Selecione...</option>
+                    {drivers.map(d => <option key={d.id} value={d.id}>{d.name || d.full_name}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div className="p-6 border-t bg-slate-50 flex gap-3">
+                <button 
+                  onClick={() => setIsEditModalOpen(false)}
+                  className="flex-1 py-4 rounded-xl border border-slate-200 font-bold text-slate-500 hover:bg-slate-100 transition-colors"
+                >
+                  CANCELAR
+                </button>
+                <button 
+                  onClick={handleUpdateOrder}
+                  className="flex-[2] py-4 rounded-xl bg-slate-900 text-white font-black text-sm flex items-center justify-center gap-2 shadow-xl shadow-slate-900/20 hover:bg-black transition-all"
+                >
+                  <Save className="w-4 h-4" /> SALVAR ALTERAÇÕES
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
